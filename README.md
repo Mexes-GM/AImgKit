@@ -37,19 +37,27 @@ AI image creators who generate batches of images and need to:
 - **Auto-naming from ComfyUI metadata** — extracts character tags from ComfyUI-generated PNG prompts and renames output files
 - **Batch processing** with progress bar
 
-## Quick Start
+## Installation
+
+### Download (Windows)
+
+Grab the latest `FastWatermark.exe` from the [Releases](https://github.com/Mexes-GM/fast-watermark/releases) page. No Python required — just double-click and run.
+
+### Run from source (any OS)
 
 ```bash
 pip install pillow opencv-python numpy tkinterdnd2
 python FastWatermarkApp.py
 ```
 
+## Usage
+
 1. Select a watermark image via **Browse** or drag & drop it onto the field
 2. Drag images/videos into the list
 3. Tweak settings in the tabs (preview updates live)
 4. Click **Start Batch Processing**
 
-Settings persist in `watermark_config.json` next to the script. See `watermark_config.example.json` for defaults.
+Settings persist in `watermark_config.json` next to the executable. See `watermark_config.example.json` for defaults.
 
 ## Project Structure
 
