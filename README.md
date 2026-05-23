@@ -62,6 +62,10 @@ Settings persist in `watermark_config.json` next to the script. See `watermark_c
 
 ## Building a Standalone .exe
 
+Pre-built binaries are available on the [Releases](https://github.com/Mexes-GM/fast-watermark/releases) page.
+
+To build from source:
+
 ```bash
 pip install pyinstaller
 pyinstaller --noconfirm --onefile --windowed --name=FastWatermark \
