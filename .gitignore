@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+*.spec
+
+# Config (user-specific)
+watermark_config.json
+
+# Temp & logs
+*.bak
+*.log
+
+# OS
+Thumbs.db
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+.cursor/
+
+# Output dirs
+watermarked_clean/
+watermarked_images/

@@ -1,0 +1,20 @@
+{
+  "watermark_path": "",
+  "watermark_size": 28.4,
+  "watermark_opacity": 80.0,
+  "watermark_corner": "bottom-left",
+  "randomize_corner": false,
+  "output_dir": "",
+  "autoname_enabled": false,
+  "post_processing": {
+    "enabled": false,
+    "upscale": 2.0,
+    "kuwahara_radius": 2,
+    "median_size": 1,
+    "downscale": 0.5,
+    "noise_strength": 0.08,
+    "noise_monochromatic": true,
+    "noise_invert": false,
+    "noise_channels": "rgb"
+  }
+}
