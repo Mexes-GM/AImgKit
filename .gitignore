@@ -6,7 +6,7 @@ venv/
 *.egg-info/
 dist/
 build/
-*.spec
+# *.spec  — FastWatermark.spec is tracked for CI builds
 
 # Config (user-specific)
 watermark_config.json
