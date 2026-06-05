@@ -5,6 +5,7 @@ import random
 import struct
 import threading
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Windows AppUserModelID (must run BEFORE any Tk window) ──────────
 if sys.platform == 'win32':
@@ -897,46 +898,74 @@ class FastWatermarkApp:
 
     def process_images(self):
         wm_path = self.watermark_path.get()
-        
+        custom_out = self.output_dir.get().strip()
+
         try:
             watermark = Image.open(wm_path).convert("RGBA")
         except Exception as e:
             self.root.after(0, lambda: messagebox.showerror("Error", f"Failed to load watermark: {e}"))
             return
 
+        # ── Snapshot config so background threads read consistent values ──
+        cfg = {
+            "watermark_size": self.watermark_size.get(),
+            "watermark_opacity": self.watermark_opacity.get(),
+            "watermark_corner": self.watermark_corner.get(),
+            "randomize_corner": self.randomize_corner.get(),
+            "pp_cfg": self._current_pp_config(),
+            "custom_out": custom_out,
+        }
+
         files = self.files_to_process
         total_files = len(files)
+        counters_lock = threading.Lock()
 
         self.root.after(0, lambda: self.status_var.set(f"Processing 0/{total_files}..."))
         self.root.after(0, lambda: self.progress.configure(maximum=total_files, value=0))
 
-        processed_count = 0
-        custom_out = self.output_dir.get().strip()
-        for i, file_path in enumerate(files):
-            try:
-                # Determine output directory: explicit override or per-file default
-                if custom_out:
-                    output_dir = custom_out
-                else:
-                    output_dir = os.path.join(os.path.dirname(file_path),
-                                              "watermarked_clean")
-                os.makedirs(output_dir, exist_ok=True)
+        processed = 0
+        max_workers = min(os.cpu_count() or 4, 8)  # I/O-bound, 4-8 threads ideal
 
-                if os.path.splitext(file_path)[1].lower() in ['.mp4', '.avi', '.mov', '.mkv']:
-                    self.overlay_watermark_video(file_path, watermark, output_dir)
-                else:
-                    self.overlay_watermark(file_path, watermark, output_dir)
-                
-                processed_count += 1
-                
-                # Update progress
-                self.root.after(0, lambda val=i+1: self.progress.configure(value=val))
-                self.root.after(0, lambda val=i+1: self.status_var.set(f"Processing {val}/{total_files}..."))
-            except Exception as e:
-                print(f"Error processing {file_path}: {e}")
+        # Pre-create output dirs to avoid race conditions
+        for file_path in files:
+            out_dir = custom_out or os.path.join(os.path.dirname(file_path),
+                                                  "watermarked_clean")
+            os.makedirs(out_dir, exist_ok=True)
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {}
+            for file_path in files:
+                fut = executor.submit(
+                    self._process_single_image,
+                    file_path, watermark, cfg, counters_lock,
+                )
+                futures[fut] = file_path
+
+            for fut in as_completed(futures):
+                file_path = futures[fut]
+                try:
+                    fut.result()
+                    processed += 1
+                except Exception as e:
+                    print(f"Error processing {file_path}: {e}")
+
+                # Update progress from background thread (root.after is thread-safe)
+                self.root.after(0, lambda v=processed: self.progress.configure(value=v))
+                self.root.after(0, lambda v=processed: self.status_var.set(
+                    f"Processing {v}/{total_files}..."))
 
         self.root.after(0, lambda: self.status_var.set("Completed!"))
-        self.root.after(0, lambda: messagebox.showinfo("Success", f"Processed {processed_count} files."))
+        self.root.after(0, lambda: messagebox.showinfo("Success", f"Processed {processed} files."))
+
+    def _process_single_image(self, file_path, watermark, cfg, counters_lock):
+        """Process one image. Called from worker threads — no GUI access."""
+        out_dir = cfg["custom_out"] or os.path.join(os.path.dirname(file_path),
+                                                     "watermarked_clean")
+
+        if os.path.splitext(file_path)[1].lower() in {'.mp4', '.avi', '.mov', '.mkv'}:
+            self._overlay_watermark_video_worker(file_path, watermark, out_dir, cfg)
+        else:
+            self._overlay_watermark_worker(file_path, watermark, out_dir, cfg, counters_lock)
 
     def overlay_watermark_video(self, video_path, watermark, save_folder):
         cap = cv2.VideoCapture(video_path)
