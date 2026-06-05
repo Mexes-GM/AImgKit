@@ -46,6 +46,7 @@ class FastWatermarkApp:
         
         # Config file path (next to .exe when frozen, next to script otherwise)
         self.config_file = os.path.join(self._app_dir(), "watermark_config.json")
+        self.library_file = os.path.join(self._app_dir(), "character_library.json")
         
         self.files_to_process = []
         self.watermark_path = tk.StringVar()
@@ -71,17 +72,22 @@ class FastWatermarkApp:
 
         # ===== Auto-naming variables =====
         self.autoname_enabled = tk.BooleanVar(value=False)
-        # Map file_path -> chosen character (filled by dialog before worker)
+        # Map file_path -> list of chosen characters (up to 2, filled by dialog before worker)
         self.autoname_map = {}
         
         # Cache for preview image
         self.preview_photo = None
+
+        # Character library — learned tags from user selections
+        # { "tag_lowercase": {"tag": "original casing", "count": N, "last_used": "ISO date"} }
+        self.character_library = {}
 
         # Per-character index for auto-naming (filled at processing time)
         self.autoname_counters = defaultdict(int)
         
         # Load saved options
         self.load_options()
+        self._load_character_library()
         
         # Try to find default watermark
         default_wm = os.path.join(os.path.dirname(__file__), "watermark.png")
@@ -330,6 +336,28 @@ class FastWatermarkApp:
                 print(f"Options loaded from {self.config_file}")
             except Exception as e:
                 print(f"Error loading options: {e}")
+
+    def _load_character_library(self):
+        """Load learned character tags from JSON file."""
+        if os.path.exists(self.library_file):
+            try:
+                with open(self.library_file, 'r') as f:
+                    data = json.load(f)
+                self.character_library = data.get("characters", {})
+                print(f"Character library loaded: {len(self.character_library)} tags")
+            except Exception as e:
+                print(f"Error loading character library: {e}")
+                self.character_library = {}
+
+    def _save_character_library(self):
+        """Persist learned character tags to JSON file."""
+        try:
+            data = {"characters": self.character_library}
+            with open(self.library_file, 'w') as f:
+                json.dump(data, f, indent=2)
+            print(f"Character library saved: {len(self.character_library)} tags")
+        except Exception as e:
+            print(f"Error saving character library: {e}")
 
     def save_options(self):
         """Save current options to config file."""
@@ -610,27 +638,127 @@ class FastWatermarkApp:
             "a dialog will show candidate tags extracted from the\n"
             "positive prompt (tags that appear before '1girl' / '1boy',\n"
             "after LoRA triggers).\n\n"
-            "Select the correct character tag, or type your own,\n"
-            "or press 'Skip' to keep the original filename.\n\n"
-            "The original name is REPLACED with:  <character>_<N>.png\n"
-            "where <N> is a per-character counter within the batch."
+            "Check all character tags that apply, or type your own\n"
+            "(comma-separated), or press 'Skip' to keep the\n"
+            "original filename.\n\n"
+            "The original name is REPLACED with:\n"
+            "  <char1>_<N>.png\n"
+            "  <char1>+<char2>+<char3>_<N>.png\n"
+            "Characters are joined with '+' for easy automated parsing.\n"
+            "<N> is a per-combination counter within the batch."
         )
         tk.Label(parent, text=info, justify="left", anchor="w",
                  wraplength=420).pack(fill="x", padx=10, pady=6)
+
+        # Library status + manage button
+        lib_frame = tk.Frame(parent)
+        lib_frame.pack(fill="x", padx=10, pady=6)
+        self.lib_status_lbl = tk.Label(lib_frame, text="", fg="#555")
+        self.lib_status_lbl.pack(side="left")
+        tk.Button(lib_frame, text="Manage Library",
+                  command=self._manage_library).pack(side="right")
+        self._update_library_status()
+
+    def _update_library_status(self):
+        n = len(self.character_library)
+        if n == 0:
+            self.lib_status_lbl.config(
+                text="📚 No learned characters yet. Selected tags will be auto-learned.")
+        else:
+            top = sorted(self.character_library.values(),
+                         key=lambda x: -x["count"])[:3]
+            names = ", ".join(e["tag"] for e in top)
+            self.lib_status_lbl.config(
+                text=f"📚 {n} learned: {names}...")
+
+    def _manage_library(self):
+        """Dialog to view and remove learned character tags."""
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Character Library")
+        dlg.geometry("500x520")
+        dlg.transient(self.root)
+        dlg.grab_set()
+
+        tk.Label(dlg, text="Learned character tags (★ = auto-selected in future)",
+                 font=("Arial", 10, "bold")).pack(pady=10)
+
+        list_frame = tk.Frame(dlg)
+        list_frame.pack(fill="both", expand=True, padx=10, pady=5)
+
+        # Sort by count desc
+        entries = sorted(self.character_library.items(),
+                         key=lambda kv: -kv[1]["count"])
+
+        if not entries:
+            tk.Label(list_frame, text="No characters learned yet. Select tags during\n"
+                     "auto-naming and they'll appear here.").pack(pady=20)
+        else:
+            canvas = tk.Canvas(list_frame, highlightthickness=0)
+            scrollbar = tk.Scrollbar(list_frame, orient="vertical", command=canvas.yview)
+            scroll_frame = tk.Frame(canvas)
+
+            scroll_frame.bind("<Configure>",
+                              lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+            canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
+            canvas.configure(yscrollcommand=scrollbar.set)
+
+            canvas.pack(side="left", fill="both", expand=True)
+            scrollbar.pack(side="right", fill="y")
+
+            for key, entry in entries:
+                row = tk.Frame(scroll_frame)
+                row.pack(fill="x", pady=2)
+                tk.Label(row, text=f"★ {entry['tag']}",
+                         font=("Arial", 10, "bold"), fg="#2e7d32",
+                         width=30, anchor="w").pack(side="left")
+                tk.Label(row, text=f"×{entry['count']}",
+                         fg="#888", width=6).pack(side="left")
+                btn = tk.Button(row, text="✕", fg="#c0392b",
+                                command=lambda k=key: self._remove_from_library(k, dlg))
+                btn.pack(side="right", padx=2)
+
+        # Buttons
+        btns = tk.Frame(dlg)
+        btns.pack(fill="x", padx=10, pady=10)
+        tk.Button(btns, text="Clear All",
+                  command=lambda: self._clear_library(dlg),
+                  fg="#c0392b").pack(side="left")
+        tk.Button(btns, text="Close", command=dlg.destroy,
+                  width=10).pack(side="right")
+
+    def _remove_from_library(self, key, dialog):
+        """Remove a single tag from the library."""
+        if key in self.character_library:
+            del self.character_library[key]
+            self._save_character_library()
+            self._update_library_status()
+            dialog.destroy()
+            self._manage_library()  # reopen to refresh
+
+    def _clear_library(self, dialog):
+        """Clear all learned tags after confirmation."""
+        if messagebox.askyesno("Clear Library",
+                               "Remove ALL learned character tags?\nThis cannot be undone.",
+                               parent=dialog):
+            self.character_library.clear()
+            self._save_character_library()
+            self._update_library_status()
+            dialog.destroy()
+            self._manage_library()  # reopen to refresh
 
     # ------------------------------------------------------------------
     # Auto-name dialog flow
     # ------------------------------------------------------------------
     def _prompt_character_for_image(self, image_path, candidates, prompt_text):
-        """Modal dialog: returns chosen character name str, or '' to skip,
-        or None to cancel batch."""
+        """Modal dialog: returns list of chosen character names (multi-select),
+        empty list to skip, or None to cancel batch."""
         dialog = tk.Toplevel(self.root)
-        dialog.title("Select character")
+        dialog.title("Select characters")
         dialog.geometry("720x560")
         dialog.transient(self.root)
         dialog.grab_set()
 
-        result = {"value": ""}
+        result = {"value": []}
         cancel_all = {"value": False}
 
         # Thumbnail + filename
@@ -647,33 +775,51 @@ class FastWatermarkApp:
         tk.Label(top, text=os.path.basename(image_path), font=("Arial", 11, "bold"),
                  wraplength=420, justify="left").pack(side="left", padx=10)
 
-        # Candidates
-        chosen = tk.StringVar(value=candidates[0] if candidates else "")
-        f_cand = tk.LabelFrame(dialog, text="Candidate tags (heuristic: tags before 1girl/1boy)",
+        # Candidates (checkboxes, unlimited)
+        f_cand = tk.LabelFrame(dialog, text="Candidate tags — check all that apply",
                                 padx=10, pady=8)
         f_cand.pack(fill="x", padx=10, pady=4)
+        check_vars = []  # list of (tk.BooleanVar, tag_string)
+        count_lbl = tk.Label(f_cand, text="", fg="#666")
+        count_lbl.pack(anchor="w")
+
+        def _update_count():
+            n = sum(1 for v, t in check_vars if v.get())
+            if n == 0:
+                count_lbl.config(text="")
+            elif n == 1:
+                count_lbl.config(text="✓ 1 character selected")
+            else:
+                count_lbl.config(text=f"✓ {n} characters selected")
+
         if candidates:
             for c in candidates:
-                tk.Radiobutton(f_cand, text=c, variable=chosen, value=c,
-                               anchor="w").pack(fill="x", anchor="w")
+                var = tk.BooleanVar(value=False)
+                check_vars.append((var, c))
+                tk.Checkbutton(f_cand, text=c, variable=var, anchor="w",
+                               command=_update_count).pack(fill="x", anchor="w")
         else:
             tk.Label(f_cand, text="(no candidates detected)").pack()
 
-        # Custom
-        f_cust = tk.LabelFrame(dialog, text="Or type custom", padx=10, pady=6)
+        # Custom entry
+        f_cust = tk.LabelFrame(dialog, text="Or type custom (comma-separated)",
+                               padx=10, pady=6)
         f_cust.pack(fill="x", padx=10, pady=4)
         custom_var = tk.StringVar()
         tk.Entry(f_cust, textvariable=custom_var).pack(fill="x")
 
-        # Buttons (packed FIRST at the bottom so they're always visible)
+        # Buttons
         btns = tk.Frame(dialog)
         btns.pack(side="bottom", fill="x", padx=10, pady=10)
         def on_apply():
-            v = custom_var.get().strip() or chosen.get().strip()
-            result["value"] = v
+            custom_text = custom_var.get().strip()
+            if custom_text:
+                result["value"] = [p.strip() for p in custom_text.split(",") if p.strip()]
+            else:
+                result["value"] = [t for v, t in check_vars if v.get()]
             dialog.destroy()
         def on_skip():
-            result["value"] = ""
+            result["value"] = []
             dialog.destroy()
         def on_cancel_all():
             cancel_all["value"] = True
@@ -684,7 +830,7 @@ class FastWatermarkApp:
         tk.Button(btns, text="Cancel batch", command=on_cancel_all,
                   width=14).pack(side="left", padx=4)
 
-        # Prompt preview (fills remaining space above the buttons)
+        # Prompt preview
         f_pp = tk.LabelFrame(dialog, text="Positive prompt (excerpt)", padx=8, pady=6)
         f_pp.pack(fill="both", expand=True, padx=10, pady=4)
         txt = tk.Text(f_pp, height=6, wrap="word")
@@ -702,20 +848,35 @@ class FastWatermarkApp:
         Returns False if user cancelled the batch.
         
         Shows dialog for ALL files (not just PNGs with ComfyUI metadata)
-        so the user can always type a custom character name manually,
+        so the user can always type custom character names manually,
         even for images/videos without embedded prompt data.
         """
         self.autoname_map = {}
         self.autoname_counters = defaultdict(int)
         if not self.autoname_enabled.get():
             return True
+
+        library_changed = False
         for path in list(self.files_to_process):
             prompt, candidates = get_candidates_for_image(path)
             choice = self._prompt_character_for_image(path, candidates, prompt)
             if choice is None:
                 return False  # user cancelled batch
-            if choice:
+            if choice:  # non-empty list
                 self.autoname_map[path] = choice
+                # ── Learn: add selected tags to character library ──
+                for tag in choice:
+                    key = tag.lower()
+                    entry = self.character_library.get(key, {"tag": tag, "count": 0})
+                    entry["count"] = entry.get("count", 0) + 1
+                    if entry["tag"] != tag and len(tag) > len(entry["tag"]):
+                        # Prefer longer/original casing
+                        entry["tag"] = tag
+                    self.character_library[key] = entry
+                    library_changed = True
+
+        if library_changed:
+            self._save_character_library()
         return True
 
     # ------------------------------------------------------------------
@@ -897,19 +1058,22 @@ class FastWatermarkApp:
 
     def _build_output_filename(self, image_path):
         """
-        Auto-naming: when a character was selected for this image, the output
-        filename is fully replaced with `<character>_<N><ext>` where N is a
-        per-character running counter (starting at 1).  Otherwise the original
-        filename is preserved.
+        Auto-naming: when characters were selected for this image, the output
+        filename is fully replaced with `<char1>_<N><ext>` (1 char) or
+        `<char1>+<char2>+<char3>_<N><ext>` (multi), where characters are
+        joined with '+' for easy automated parsing and N is a per-combination
+        running counter (starting at 1).  Otherwise the original filename
+        is preserved.
         """
         original = os.path.basename(image_path)
-        character = self.autoname_map.get(image_path)
-        if not character:
+        characters = self.autoname_map.get(image_path)
+        if not characters:
             return original
         ext = os.path.splitext(original)[1]
-        safe = sanitize_for_filename(character)
-        self.autoname_counters[safe] += 1
-        return f"{safe}_{self.autoname_counters[safe]}{ext}"
+        safe_names = [sanitize_for_filename(c) for c in characters]
+        joined = "+".join(safe_names)
+        self.autoname_counters[joined] += 1
+        return f"{joined}_{self.autoname_counters[joined]}{ext}"
 
     def overlay_watermark(self, image_path, watermark, save_folder):
         with Image.open(image_path) as im:
