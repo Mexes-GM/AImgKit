@@ -967,7 +967,11 @@ class FastWatermarkApp:
         else:
             self._overlay_watermark_worker(file_path, watermark, out_dir, cfg, counters_lock)
 
-    def overlay_watermark_video(self, video_path, watermark, save_folder):
+    # ------------------------------------------------------------------
+    # Worker methods (called from thread pool — no tkinter variable access)
+    # ------------------------------------------------------------------
+    def _overlay_watermark_video_worker(self, video_path, watermark, save_folder, cfg):
+        """Thread-safe video watermarking. Reads all params from cfg dict."""
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             print(f"Failed to open video: {video_path}")
@@ -977,43 +981,37 @@ class FastWatermarkApp:
         fps = cap.get(cv2.CAP_PROP_FPS)
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        
+
         filename = os.path.basename(video_path)
         save_path = os.path.join(save_folder, filename)
 
         out = cv2.VideoWriter(save_path, fourcc, fps, (width, height))
 
-        # Size logic
         wm_width, wm_height = watermark.size
         ref_dim = min(width, height)
-        size_percent = self.watermark_size.get()
-        target_w = int(ref_dim * (size_percent / 100))
+        target_w = int(ref_dim * (cfg["watermark_size"] / 100))
         min_w = int(ref_dim * WATERMARK_MIN_RELATIVE)
         max_w = int(ref_dim * WATERMARK_MAX_RELATIVE)
         target_w = max(min_w, min(max_w, target_w))
         scale = target_w / wm_width
-        
-        wm_resized = watermark.resize((int(wm_width * scale), int(wm_height * scale)), resample=Image.LANCZOS)
-        
-        # Prepare arrays
-        wm_np = np.array(wm_resized) # R, G, B, A
-        wm_rgb = wm_np[:, :, :3] # R, G, B
-        wm_bgr = wm_rgb[:, :, ::-1] # B, G, R for OpenCV
-        wm_mask = wm_np[:, :, 3] # A
+
+        wm_resized = watermark.resize(
+            (int(wm_width * scale), int(wm_height * scale)), resample=Image.LANCZOS)
+
+        wm_np = np.array(wm_resized)
+        wm_bgr = wm_np[:, :, :3][:, :, ::-1]
+        wm_mask = wm_np[:, :, 3]
 
         wm_h, wm_w = wm_bgr.shape[:2]
-        
-        # Determine corner position
-        corner = self.watermark_corner.get()
-        if self.randomize_corner.get():
+
+        corner = cfg["watermark_corner"]
+        if cfg["randomize_corner"]:
             corner = random.choice(["bottom-left", "bottom-right", "top-left", "top-right"])
-        
+
         x, y = self.get_watermark_position_video(width, height, wm_w, wm_h, corner)
 
-        # Precompute floats
         wm_bgr_f = wm_bgr.astype(float)
-        opacity_percent = self.watermark_opacity.get()
-        wm_mask_f = (wm_mask.astype(float) / 255.0) * (opacity_percent / 100)
+        wm_mask_f = (wm_mask.astype(float) / 255.0) * (cfg["watermark_opacity"] / 100)
 
         while True:
             ret, frame = cap.read()
@@ -1025,11 +1023,8 @@ class FastWatermarkApp:
                 continue
 
             roi = frame[y:y+wm_h, x:x+wm_w].astype(float)
-            
-            # Blend
             for c in range(3):
                 roi[:, :, c] = wm_bgr_f[:, :, c] * wm_mask_f + roi[:, :, c] * (1 - wm_mask_f)
-            
             frame[y:y+wm_h, x:x+wm_w] = roi.astype(np.uint8)
             out.write(frame)
 
@@ -1058,17 +1053,6 @@ class FastWatermarkApp:
         
         return (max(0, x), max(0, y))
 
-    def strip_metadata(self, image):
-        """
-        Remove ALL metadata from image (EXIF, IPTC, XMP, JFIF, etc.)
-        Returns a completely clean image.
-        """
-        # Extract raw pixel data
-        data = list(image.getdata())
-        image_without_metadata = Image.new(image.mode, image.size)
-        image_without_metadata.putdata(data)
-        return image_without_metadata
-
     def _current_pp_config(self):
         return {
             "enabled": self.pp_enabled.get(),
@@ -1085,14 +1069,10 @@ class FastWatermarkApp:
             "noise_channels": self.pp_noise_channels.get(),
         }
 
-    def _build_output_filename(self, image_path):
+    def _build_output_filename(self, image_path, counters_lock=None):
         """
-        Auto-naming: when characters were selected for this image, the output
-        filename is fully replaced with `<char1>_<N><ext>` (1 char) or
-        `<char1>+<char2>+<char3>_<N><ext>` (multi), where characters are
-        joined with '+' for easy automated parsing and N is a per-combination
-        running counter (starting at 1).  Otherwise the original filename
-        is preserved.
+        Auto-naming: thread-safe version. Pass counters_lock when called
+        from worker threads.
         """
         original = os.path.basename(image_path)
         characters = self.autoname_map.get(image_path)
@@ -1101,13 +1081,19 @@ class FastWatermarkApp:
         ext = os.path.splitext(original)[1]
         safe_names = [sanitize_for_filename(c) for c in characters]
         joined = "+".join(safe_names)
-        self.autoname_counters[joined] += 1
-        return f"{joined}_{self.autoname_counters[joined]}{ext}"
+        if counters_lock:
+            with counters_lock:
+                self.autoname_counters[joined] += 1
+                n = self.autoname_counters[joined]
+        else:
+            self.autoname_counters[joined] += 1
+            n = self.autoname_counters[joined]
+        return f"{joined}_{n}{ext}"
 
-    def overlay_watermark(self, image_path, watermark, save_folder):
+    def _overlay_watermark_worker(self, image_path, watermark, save_folder, cfg, counters_lock):
+        """Thread-safe image watermarking. Reads all params from cfg dict."""
         with Image.open(image_path) as im:
-            # Apply post-processing pipeline first (operates on RGB plane).
-            pp_cfg = self._current_pp_config()
+            pp_cfg = cfg["pp_cfg"]
             if pp_cfg["enabled"]:
                 if im.mode not in ("RGB", "RGBA"):
                     im_proc = im.convert("RGB")
@@ -1120,22 +1106,21 @@ class FastWatermarkApp:
             im_width, im_height = im_proc.size
             wm_width, wm_height = watermark.size
 
-            # Compute watermark size
             ref_dim = min(im_width, im_height)
-            size_percent = self.watermark_size.get()
-            target_w = int(ref_dim * (size_percent / 100))
+            target_w = int(ref_dim * (cfg["watermark_size"] / 100))
             min_w = int(ref_dim * WATERMARK_MIN_RELATIVE)
             max_w = int(ref_dim * WATERMARK_MAX_RELATIVE)
             target_w = max(min_w, min(max_w, target_w))
             scale_factor = target_w / wm_width
 
-            wm_resized = watermark.resize((int(wm_width * scale_factor), int(wm_height * scale_factor)), resample=Image.LANCZOS)
+            wm_resized = watermark.resize(
+                (int(wm_width * scale_factor), int(wm_height * scale_factor)),
+                resample=Image.LANCZOS)
 
-            # Apply opacity
-            opacity_percent = self.watermark_opacity.get()
-            if opacity_percent < 100:
+            if cfg["watermark_opacity"] < 100:
                 wm_resized = wm_resized.copy()
-                alpha = wm_resized.split()[3].point(lambda p: int(p * (opacity_percent / 100)))
+                alpha = wm_resized.split()[3].point(
+                    lambda p: int(p * (cfg["watermark_opacity"] / 100)))
                 wm_resized.putalpha(alpha)
 
             if im_proc.mode != 'RGBA':
@@ -1145,36 +1130,32 @@ class FastWatermarkApp:
 
             layer = Image.new("RGBA", base.size, (0, 0, 0, 0))
 
-            # Determine corner position
-            corner = self.watermark_corner.get()
-            if self.randomize_corner.get():
+            corner = cfg["watermark_corner"]
+            if cfg["randomize_corner"]:
                 corner = random.choice(["bottom-left", "bottom-right", "top-left", "top-right"])
 
             position = self.get_watermark_position(base, wm_resized, corner)
             layer.paste(wm_resized, position, wm_resized)
             result = Image.alpha_composite(base, layer)
 
-            filename = self._build_output_filename(image_path)
+            filename = self._build_output_filename(image_path, counters_lock)
             ext = os.path.splitext(filename)[1].lower()
             save_path = os.path.join(save_folder, filename)
 
             # Safety: never overwrite the original input file.
-            # If output would collide with input (e.g. user set output dir
-            # to the same folder and auto-naming is off), add a suffix.
             if os.path.normpath(save_path) == os.path.normpath(image_path):
-                base = os.path.splitext(filename)[0]
-                save_path = os.path.join(save_folder, f"{base}_wm{ext}")
+                base_name = os.path.splitext(filename)[0]
+                save_path = os.path.join(save_folder, f"{base_name}_wm{ext}")
                 print(f"WARNING: output would overwrite input. "
                       f"Saved as: {os.path.basename(save_path)}")
 
-            # Save WITHOUT any metadata (EXIF, IPTC, XMP, JFIF, etc.)
+            # Save WITHOUT metadata — PIL doesn't embed EXIF/pnginfo unless
+            # explicitly passed, so no strip_metadata() needed.
             if ext in ['.jpg', '.jpeg']:
                 rgb = result.convert("RGB")
-                clean_img = self.strip_metadata(rgb)
-                clean_img.save(save_path, "JPEG", quality=95, optimize=True)
-            else:  # PNG and other formats
-                clean_img = self.strip_metadata(result)
-                clean_img.save(save_path, "PNG", optimize=True)
+                rgb.save(save_path, "JPEG", quality=95, optimize=True)
+            else:
+                result.save(save_path, "PNG", optimize=True)
 
 if __name__ == "__main__":
     root = TkinterDnD.Tk()
