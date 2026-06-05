@@ -794,11 +794,42 @@ class FastWatermarkApp:
                 count_lbl.config(text=f"✓ {n} characters selected")
 
         if candidates:
-            for c in candidates:
-                var = tk.BooleanVar(value=False)
+            # ── Sort by library confidence: known tags first, then by usage count ──
+            def _sort_key(tag):
+                lib_entry = self.character_library.get(tag.lower())
+                if lib_entry:
+                    # Known character: sort by count desc (higher = more confident)
+                    return (0, -lib_entry.get("count", 0), -len(tag))
+                # Unknown: after all known tags, then by length
+                return (1, 0, -len(tag))
+
+            sorted_candidates = sorted(candidates, key=_sort_key)
+
+            # Auto-select: pre-check tags that match the library AND are the
+            # clear top pick (count >= 2, and at least 2x the next known tag).
+            auto_select = set()
+            known = [(c, self.character_library.get(c.lower())) for c in sorted_candidates
+                     if self.character_library.get(c.lower())]
+            if known:
+                best_tag, best_entry = known[0]
+                best_count = best_entry.get("count", 0)
+                if best_count >= 2:
+                    second_count = known[1][1].get("count", 0) if len(known) > 1 else 0
+                    if best_count >= second_count * 2:
+                        auto_select.add(best_tag.lower())
+
+            for c in sorted_candidates:
+                lib = self.character_library.get(c.lower())
+                label = f"★ {c}  (×{lib['count']})" if lib else c
+                prechecked = c.lower() in auto_select
+                var = tk.BooleanVar(value=prechecked)
                 check_vars.append((var, c))
-                tk.Checkbutton(f_cand, text=c, variable=var, anchor="w",
-                               command=_update_count).pack(fill="x", anchor="w")
+                cb = tk.Checkbutton(f_cand, text=label, variable=var, anchor="w",
+                                    command=_update_count)
+                if lib:
+                    cb.config(fg="#2e7d32", font=("Arial", 9, "bold"))
+                cb.pack(fill="x", anchor="w")
+            _update_count()  # show count for auto-selected items
         else:
             tk.Label(f_cand, text="(no candidates detected)").pack()
 
