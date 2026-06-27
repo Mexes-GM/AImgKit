@@ -16,7 +16,7 @@
 
 ## What it is
 
-It started as a tool to slap a watermark on images quickly. It has since grown into a small Swiss-army knife for the last mile of an AI image workflow: the repetitive, easy-to-forget steps between "the render is done" and "it's ready to publish."
+It started as a tool to slap a watermark on images quickly. It has since grown into a small Swiss-army knife for the last mile of an AI image workflow: the repetitive, easy-to-forget steps.
 
 Point it at a folder, set your defaults once, and every export comes out watermarked, metadata-free, optionally filtered, and sensibly named — without touching the originals.
 
@@ -38,7 +38,6 @@ AI artists and creators who generate images and videos in batches and need to:
 - **Live preview** — size, opacity, and position update in real time as you adjust them
 - **Images &amp; video** — PNG, JPG/JPEG, and MP4, AVI, MOV, MKV
 - **Metadata stripping** — output files are saved without EXIF, PNG text chunks, XMP, or ICC profiles
-- **Audio preserved in video** — frames are re-watermarked with OpenCV and the original audio track is remuxed back in via bundled ffmpeg
 - **Configurable post-processing pipeline** (disabled by default) — see below
 - **Auto-naming from ComfyUI metadata** — extracts character tag candidates from the positive prompt and renames output files; a character library remembers your past choices (images only)
 - **Batch processing** — progress bar with mid-batch cancel; failures are logged and summarized instead of crashing the run
