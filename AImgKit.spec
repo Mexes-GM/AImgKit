@@ -6,6 +6,9 @@ binaries = []
 hiddenimports = ['tkinterdnd2', 'PIL._tkinter_finder']
 tmp_ret = collect_all('tkinterdnd2')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+# CustomTkinter ships theme/asset files that must be bundled too.
+tmp_ret = collect_all('customtkinter')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 import os
 _ffmpeg = 'ffmpeg.exe'
@@ -14,7 +17,7 @@ if os.path.exists(_ffmpeg):
 
 
 a = Analysis(
-    ['FastWatermarkApp.py'],
+    ['AImgKit.py'],
     pathex=[],
     binaries=binaries,
     datas=datas,
@@ -34,7 +37,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='FastWatermark',
+    name='AImgKit',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

@@ -220,9 +220,15 @@ def sanitize_for_filename(name: str) -> str:
     s = name.replace("\\(", "(").replace("\\)", ")")
     s = re.sub(r"[\\/:*?\"<>|]", "", s)
     s = s.strip().replace(" ", "_")
+    # Windows silently trims trailing dots/spaces from filenames, causing
+    # a mismatch between the expected path and the real one on disk.
+    s = s.rstrip(". ")
     if not s:
         return 'unnamed'
-    if s.lower() in _WINDOWS_RESERVED:
+    # Check stem (part before first dot) against reserved names so that
+    # "CON.txt" → "CON" stem is also caught.
+    stem = s.split(".")[0]
+    if stem.lower() in _WINDOWS_RESERVED:
         s = '_' + s
     return s
 

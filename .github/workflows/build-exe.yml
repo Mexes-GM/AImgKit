@@ -26,29 +26,36 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install -r requirements.txt && pip install pyinstaller==6.20.0
+          pip install -r requirements.txt && pip install pyinstaller==6.20.0 pytest==8.3.4
 
-      - name: Download ffmpeg
+      - name: Run tests
+        run: pytest -q
+
+      - name: Download ffmpeg (LGPL static build)
         run: |
-          $url = 'https://github.com/GyanD/codexffmpeg/releases/download/7.1.1/ffmpeg-7.1.1-essentials_build.zip'
+          # LGPL build: AImgKit only remuxes (-c copy), so no GPL codecs are needed.
+          # See THIRD_PARTY_NOTICES.md for the license + source reference.
+          $url = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip'
           Invoke-WebRequest $url -OutFile ffmpeg.zip
           Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_extract
           Copy-Item (Get-ChildItem -Recurse -Filter ffmpeg.exe ffmpeg_extract).FullName .
 
       - name: Build with PyInstaller
         run: |
-          pyinstaller FastWatermark.spec
+          pyinstaller AImgKit.spec
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: FastWatermark
-          path: dist/FastWatermark.exe
+          name: AImgKit
+          path: dist/AImgKit.exe
           retention-days: 7
 
       - name: Create Release (tags only)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/FastWatermark.exe
+          files: |
+            dist/AImgKit.exe
+            THIRD_PARTY_NOTICES.md
           generate_release_notes: true

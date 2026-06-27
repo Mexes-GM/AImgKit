@@ -8,7 +8,7 @@ venv/
 dist/
 build/
 
-# *.spec — FastWatermark.spec is tracked for CI builds
+# *.spec — AImgKit.spec is tracked for CI builds
 
 # Config (user-specific)
 watermark_config.json
@@ -41,6 +41,9 @@ desktop.ini
 
 # Internal docs
 FIXES_PLAN.md
+
+# Development mockups
+mockups/
 
 # Output dirs
 watermarked_clean/

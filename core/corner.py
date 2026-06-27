@@ -17,9 +17,11 @@ class CornerSelector:
         with self._lock:
             self._last = None
 
-    def choose(self) -> str:
+    def choose(self, exclude: str | None = None) -> str:
         with self._lock:
-            choices = [c for c in CORNERS if c != self._last]
+            choices = [c for c in CORNERS if c != self._last and c != exclude]
+            if not choices:  # fallback if all excluded
+                choices = [c for c in CORNERS if c != exclude] or CORNERS
             selected = random.choice(choices)
             self._last = selected
             return selected
