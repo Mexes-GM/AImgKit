@@ -26,7 +26,14 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install opencv-python numpy pillow tkinterdnd2 pyinstaller
+          pip install -r requirements.txt && pip install pyinstaller==6.20.0
+
+      - name: Download ffmpeg
+        run: |
+          $url = 'https://github.com/GyanD/codexffmpeg/releases/download/7.1.1/ffmpeg-7.1.1-essentials_build.zip'
+          Invoke-WebRequest $url -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_extract
+          Copy-Item (Get-ChildItem -Recurse -Filter ffmpeg.exe ffmpeg_extract).FullName .
 
       - name: Build with PyInstaller
         run: |

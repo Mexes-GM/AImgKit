@@ -1,28 +1,46 @@
 # Python
 __pycache__/
 *.py[cod]
+*.pyo
 .venv/
 venv/
 *.egg-info/
 dist/
 build/
-# *.spec  — FastWatermark.spec is tracked for CI builds
+
+# *.spec — FastWatermark.spec is tracked for CI builds
 
 # Config (user-specific)
 watermark_config.json
+character_library.json
 
 # Temp & logs
 *.bak
 *.log
+*.tmp
+ffmpeg.exe
+
+# Tests
+.pytest_cache/
+.coverage
+htmlcov/
+*.pytest_tmp/
+tests/tmp/
+tests/__pycache__/
 
 # OS
 Thumbs.db
 .DS_Store
+desktop.ini
 
 # IDE
 .vscode/
 .idea/
 .cursor/
+.kiro/
+
+# Internal docs
+FIXES_PLAN.md
 
 # Output dirs
 watermarked_clean/

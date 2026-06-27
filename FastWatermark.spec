@@ -7,6 +7,11 @@ hiddenimports = ['tkinterdnd2', 'PIL._tkinter_finder']
 tmp_ret = collect_all('tkinterdnd2')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
+import os
+_ffmpeg = 'ffmpeg.exe'
+if os.path.exists(_ffmpeg):
+    datas.append((_ffmpeg, '.'))
+
 
 a = Analysis(
     ['FastWatermarkApp.py'],
@@ -33,7 +38,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,

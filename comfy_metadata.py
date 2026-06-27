@@ -59,7 +59,7 @@ def _collect_text_strings(graph: dict) -> list[tuple[str, str]]:
         inputs = node.get("inputs", {}) or {}
         for k in TEXT_PASSTHROUGH_INPUTS:
             v = inputs.get(k)
-            if isinstance(v, str) and len(v) > 5:
+            if isinstance(v, str) and len(v) > MIN_TEXT_LEN:
                 out.append((nid, v))
                 break
     return out
@@ -146,37 +146,84 @@ def extract_character_candidates(prompt: str,
         "lips", "nose", "wide hips", "thick thighs", "narrow waist",
         "large breasts", "medium breasts", "small breasts", "huge breasts",
         "flat chest", "curvy", "plump", "slim", "muscular", "tall",
+        "massive thick thighs", "shiny skin", "wet skin", "oiled skin",
     }
 
-    candidates: list[str] = []
+    QUALITY_NOISE = {
+        "masterpiece", "best quality", "high quality", "highres",
+        "absurdres", "incredible quality", "amazing quality",
+    }
+
+    candidates: list[tuple[str, int]] = []  # (tag, score)
     seen = set()
     for t in pre_pivot:
-        tl = t.lower()
-        if tl in seen:
+        tl = t.lower().strip()
+        
+        # Clean escaped parentheses: \( → (, \) → )
+        cleaned = t.replace("\\(", "(").replace("\\)", ")")
+        cleaned_lower = cleaned.lower()
+        
+        if cleaned_lower in seen:
             continue
-        seen.add(tl)
-        if tl in BODY_NOISE:
+        seen.add(cleaned_lower)
+        
+        # Skip body noise
+        if cleaned_lower in BODY_NOISE:
             continue
+        
+        # Skip quality tags
+        if cleaned_lower in QUALITY_NOISE:
+            continue
+        
         # LoRA triggers tend to be short alphanumeric blobs without spaces
-        if " " not in t and len(t) <= 7 and re.search(r"\d", t):
+        if " " not in cleaned and len(cleaned) <= 7 and re.search(r"\d", cleaned):
             continue
+        
         # Ignore single short word tags (likely body parts)
-        if " " not in t and len(t) <= 4:
+        if " " not in cleaned and len(cleaned) <= 4:
             continue
-        candidates.append(t)
+        
+        # Score: higher = more likely to be a character
+        score = 0
+        
+        # Danbooru character pattern: "name \(series\)" or "name (series)"
+        if re.search(r"\([^)]+\)", cleaned):
+            score += 100  # Strong signal: character with series
+        
+        # Multi-word tags are more likely characters
+        if " " in cleaned:
+            score += 10
+        
+        # Longer tags are more specific
+        score += len(cleaned)
+        
+        candidates.append((cleaned, score))
 
-    # Rank: multi-word first, then longer
-    candidates.sort(key=lambda x: (-(" " in x), -len(x)))
-    return candidates[:max_candidates]
+    # Sort by score descending
+    candidates.sort(key=lambda x: -x[1])
+    return [c[0] for c in candidates[:max_candidates]]
 
 
 # ---------------------------------------------------------------------------
+_WINDOWS_RESERVED = {
+    'con', 'prn', 'aux', 'nul',
+    *[f'com{i}' for i in range(1, 10)],
+    *[f'lpt{i}' for i in range(1, 10)],
+}
+
+MIN_TEXT_LEN = 5
+
+
 def sanitize_for_filename(name: str) -> str:
     """Make a tag safe to embed in a filename."""
     # drop ComfyUI-style escape backslashes
     s = name.replace("\\(", "(").replace("\\)", ")")
     s = re.sub(r"[\\/:*?\"<>|]", "", s)
     s = s.strip().replace(" ", "_")
+    if not s:
+        return 'unnamed'
+    if s.lower() in _WINDOWS_RESERVED:
+        s = '_' + s
     return s
 
 

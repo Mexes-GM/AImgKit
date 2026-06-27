@@ -43,10 +43,14 @@ AI image creators who generate batches of images and need to:
 
 Grab the latest `FastWatermark.exe` from the [Releases](https://github.com/Mexes-GM/fast-watermark/releases) page. No Python required — just double-click and run.
 
+> **Video audio is preserved** — ffmpeg is bundled in the executable and used automatically to copy audio from the original video into the watermarked output.
+
+> **SmartScreen / antivirus warning** — The binary is not code-signed. Windows SmartScreen or your AV may flag it as unknown. Click "More info → Run anyway" to proceed, or run from source instead.
+
 ### Run from source (any OS)
 
 ```bash
-pip install pillow opencv-python numpy tkinterdnd2
+pip install -r requirements.txt
 python FastWatermarkApp.py
 ```
 
