@@ -40,7 +40,7 @@ from core.corner import CornerSelector
 from core.naming import build_output_filename as _core_build_output_filename
 from core.io_save import save_without_metadata, unique_save_path as _core_unique_save_path
 
-__version__ = "2.0.1"
+__version__ = "2.0.2"
 
 # FIX-09: allow up to 300 MP; DecompressionBombError raised beyond this
 Image.MAX_IMAGE_PIXELS = 300_000_000
@@ -1599,9 +1599,14 @@ class AImgKitApp:
     # ------------------------------------------------------------------
     # Auto-name dialog flow
     # ------------------------------------------------------------------
-    def _build_candidate_checkboxes(self, parent, candidates: list[str]) -> tuple[list, "ctk.CTkLabel"]:
-        """Populate candidate checkboxes inside parent frame; return (check_vars, count_lbl)."""
+    def _build_candidate_checkboxes(self, parent, candidates: list[str]) -> tuple[list, "ctk.CTkLabel", list]:
+        """Populate candidate checkboxes inside parent frame.
+
+        Returns (check_vars, count_lbl, checkboxes). The first few candidates are
+        prefixed with a number so the 1-5 keyboard shortcuts are discoverable.
+        """
         check_vars: list[tuple[tk.BooleanVar, str]] = []
+        checkboxes: list = []
         count_lbl = ctk.CTkLabel(parent, text="", text_color="gray")
         count_lbl.pack(anchor="w", padx=10)
 
@@ -1612,7 +1617,7 @@ class AImgKitApp:
 
         if not candidates:
             ctk.CTkLabel(parent, text="(no candidates detected)").pack(padx=10, pady=4)
-            return check_vars, count_lbl
+            return check_vars, count_lbl, checkboxes
 
         def _sort_key(tag: str):
             e = self.character_library.get(tag.lower())
@@ -1629,22 +1634,25 @@ class AImgKitApp:
             if best_count >= 1 and best_count >= second_count * 2:
                 auto_select.add(best_tag.lower())
 
-        for c in sorted_candidates:
+        for idx, c in enumerate(sorted_candidates):
             lib = self.character_library.get(c.lower())
             label = f"★ {c}  (×{lib['count']})" if lib else c
+            if idx < 5:  # number the first five for the 1-5 keyboard shortcuts
+                label = f"[{idx + 1}] {label}"
             var = tk.BooleanVar(value=c.lower() in auto_select)
             check_vars.append((var, c))
             cb = ctk.CTkCheckBox(parent, text=label, variable=var, command=_update_count)
             if lib:
                 cb.configure(text_color="#2e7d32", font=ctk.CTkFont(weight="bold"))
             cb.pack(fill="x", anchor="w", padx=10, pady=2)
+            checkboxes.append(cb)
         _update_count()
-        return check_vars, count_lbl
+        return check_vars, count_lbl, checkboxes
 
     def _build_dialog_buttons(self, parent, result: dict, cancel_all: dict,
                                check_vars: list, custom_var: tk.StringVar,
-                               dialog) -> None:
-        """Pack Apply / Skip / Cancel buttons into parent frame."""
+                               dialog, checkboxes: list | None = None) -> None:
+        """Pack Apply / Skip / Cancel buttons into parent frame and wire shortcuts."""
         def on_apply():
             custom_text = custom_var.get().strip()
             result["value"] = (
@@ -1667,6 +1675,29 @@ class AImgKitApp:
                       fg_color="gray30", hover_color="gray25").pack(side="right", padx=4)
         ctk.CTkButton(parent, text="Cancel batch", command=on_cancel_all, width=120,
                       fg_color="gray30", hover_color="gray25").pack(side="left", padx=4)
+
+        # ── Keyboard shortcuts ──────────────────────────────────────────
+        # Enter applies; digits 1-5 toggle the first five candidate tags.
+        # (Dialog-level key bindings also fire while a child has focus, so we
+        # skip the digit shortcut when the custom-name entry is focused, letting
+        # the user actually type numbers there.)
+        dialog.bind("<Return>", lambda e: on_apply(), add="+")
+        dialog.bind("<KP_Enter>", lambda e: on_apply(), add="+")
+
+        checkboxes = checkboxes or []
+
+        def _make_toggle(idx):
+            def _handler(event=None):
+                if isinstance(dialog.focus_get(), tk.Entry):
+                    return  # typing into the custom entry — let the digit through
+                if idx < len(checkboxes):
+                    checkboxes[idx].toggle()
+                return "break"
+            return _handler
+
+        for i in range(min(5, len(checkboxes))):
+            dialog.bind(f"<Key-{i + 1}>", _make_toggle(i), add="+")
+            dialog.bind(f"<KP_{i + 1}>", _make_toggle(i), add="+")
 
     def _make_dialog_minimize_safe(self, dialog):
         """Keep a modal CTkToplevel restorable when the main window is minimized.
@@ -1732,9 +1763,19 @@ class AImgKitApp:
         """Modal dialog: returns chosen character names, [] to skip, None to cancel batch."""
         dialog = ctk.CTkToplevel(self.root)
         dialog.title("Select characters")
-        dialog.geometry("860x540")
+        # Reuse the previous prompt's position so consecutive dialogs don't drift
+        # across the screen; fall back to a plain size on the very first one.
+        saved_pos = getattr(self, "_char_modal_pos", None)
+        dialog.geometry(f"860x540{saved_pos}" if saved_pos else "860x540")
         dialog.minsize(680, 440)
         dialog.transient(self.root)
+
+        def _remember_pos(event=None):
+            if event is not None and event.widget is not dialog:
+                return
+            if dialog.winfo_exists() and dialog.winfo_viewable():
+                self._char_modal_pos = f"+{dialog.winfo_x()}+{dialog.winfo_y()}"
+        dialog.bind("<Configure>", _remember_pos, add="+")
 
         _cleanup_minimize_guard = self._make_dialog_minimize_safe(dialog)
         dialog.protocol("WM_DELETE_WINDOW", lambda: None)  # block closing via X
@@ -1777,7 +1818,7 @@ class AImgKitApp:
         f_cand.pack(fill="x", padx=0, pady=(0, 6))
         ctk.CTkLabel(f_cand, text="Candidate tags — check all that apply",
                      font=ctk.CTkFont(size=14, weight="bold"), anchor="w").pack(fill="x", padx=10, pady=(10, 4))
-        check_vars, _ = self._build_candidate_checkboxes(f_cand, candidates)
+        check_vars, _, checkboxes = self._build_candidate_checkboxes(f_cand, candidates)
 
         # Custom entry
         f_cust = ctk.CTkFrame(right_col, border_width=1, border_color="gray25")
@@ -1797,7 +1838,7 @@ class AImgKitApp:
         txt.configure(state="disabled")
         txt.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
-        self._build_dialog_buttons(btns, result, cancel_all, check_vars, custom_var, dialog)
+        self._build_dialog_buttons(btns, result, cancel_all, check_vars, custom_var, dialog, checkboxes)
 
         dialog.wait_window()
         _cleanup_minimize_guard()
