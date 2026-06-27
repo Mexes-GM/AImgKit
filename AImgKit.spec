@@ -6,6 +6,11 @@ binaries = []
 hiddenimports = ['tkinterdnd2', 'PIL._tkinter_finder']
 tmp_ret = collect_all('tkinterdnd2')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+# The PyInstaller hook for tkinterdnd2 looks for 'win-x64' but the package ships
+# 'win64' — include the native files manually so drag & drop works at runtime.
+import tkinterdnd2 as _dnd
+_dnd_tkdnd = os.path.join(os.path.dirname(_dnd.__file__), 'tkdnd')
+datas += [(_dnd_tkdnd, 'tkinterdnd2/tkdnd')]
 # CustomTkinter ships theme/asset files that must be bundled too.
 tmp_ret = collect_all('customtkinter')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]

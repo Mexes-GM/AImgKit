@@ -40,7 +40,7 @@ from core.corner import CornerSelector
 from core.naming import build_output_filename as _core_build_output_filename
 from core.io_save import save_without_metadata, unique_save_path as _core_unique_save_path
 
-__version__ = "2.0.0"
+__version__ = "2.0.1"
 
 # FIX-09: allow up to 300 MP; DecompressionBombError raised beyond this
 Image.MAX_IMAGE_PIXELS = 300_000_000
@@ -165,6 +165,7 @@ class AImgKitApp:
         self.pp_upscale = tk.DoubleVar(value=DEFAULT_PIPELINE["upscale"])
         self.pp_upscale_method = tk.StringVar(value=DEFAULT_PIPELINE["upscale_method"])
         self.pp_kuwahara_radius = tk.IntVar(value=DEFAULT_PIPELINE["kuwahara_radius"])
+        self.pp_kuwahara_method = tk.StringVar(value=DEFAULT_PIPELINE["kuwahara_method"])
         self.pp_median_size = tk.IntVar(value=DEFAULT_PIPELINE["median_size"])
         self.pp_downscale = tk.DoubleVar(value=DEFAULT_PIPELINE["downscale"])
         self.pp_downscale_method = tk.StringVar(value=DEFAULT_PIPELINE["downscale_method"])
@@ -535,7 +536,7 @@ class AImgKitApp:
                   self.watermark2_corner, self.watermark2_randomize,
                   self.pp_enabled, self.pp_jpeg_removal_strength,
                   self.pp_upscale, self.pp_upscale_method,
-                  self.pp_kuwahara_radius,
+                  self.pp_kuwahara_radius, self.pp_kuwahara_method,
                   self.pp_median_size, self.pp_downscale, self.pp_downscale_method,
                   self.pp_noise_strength,
                   self.pp_noise_mono, self.pp_noise_invert, self.pp_noise_channels,
@@ -586,6 +587,7 @@ class AImgKitApp:
                 if "upscale" in pp: self.pp_upscale.set(pp["upscale"])
                 if "upscale_method" in pp: self.pp_upscale_method.set(pp["upscale_method"])
                 if "kuwahara_radius" in pp: self.pp_kuwahara_radius.set(pp["kuwahara_radius"])
+                if "kuwahara_method" in pp: self.pp_kuwahara_method.set(pp["kuwahara_method"])
                 if "median_size" in pp: self.pp_median_size.set(pp["median_size"])
                 if "downscale" in pp: self.pp_downscale.set(pp["downscale"])
                 if "downscale_method" in pp: self.pp_downscale_method.set(pp["downscale_method"])
@@ -659,6 +661,7 @@ class AImgKitApp:
                     "upscale": self.pp_upscale.get(),
                     "upscale_method": self.pp_upscale_method.get(),
                     "kuwahara_radius": self.pp_kuwahara_radius.get(),
+                    "kuwahara_method": self.pp_kuwahara_method.get(),
                     "median_size": self.pp_median_size.get(),
                     "downscale": self.pp_downscale.get(),
                     "downscale_method": self.pp_downscale_method.get(),
@@ -1065,12 +1068,17 @@ class AImgKitApp:
                         command=lambda _: self.update_pp_preview()).pack(side="left", padx=6)
 
         # Kuwahara
-        f = self._section(scroll, "2) Kuwahara Blur (mean)")
+        f = self._section(scroll, "2) Kuwahara Blur")
         h = ctk.CTkFrame(f, fg_color="transparent"); h.pack(fill="x", padx=10)
         ctk.CTkLabel(h, text="Radius (0 = disabled):", anchor="w").pack(side="left")
         lbl_kw = ctk.CTkLabel(h, text=str(self.pp_kuwahara_radius.get()), text_color=VALUE_FG, font=ctk.CTkFont(weight="bold")); lbl_kw.pack(side="right")
         ctk.CTkSlider(f, from_=0, to=8, number_of_steps=8, variable=self.pp_kuwahara_radius,
-                      command=lambda v: (lbl_kw.configure(text=str(int(v))), self.update_pp_preview())).pack(fill="x", padx=10, pady=(4, 10))
+                      command=lambda v: (lbl_kw.configure(text=str(int(v))), self.update_pp_preview())).pack(fill="x", padx=10, pady=(4, 6))
+        mrow_kw = ctk.CTkFrame(f, fg_color="transparent"); mrow_kw.pack(fill="x", padx=10, pady=(0, 10))
+        ctk.CTkLabel(mrow_kw, text="Method:").pack(side="left")
+        ctk.CTkComboBox(mrow_kw, variable=self.pp_kuwahara_method, width=110, state="readonly",
+                        values=["mean", "gaussian"],
+                        command=lambda _: self.update_pp_preview()).pack(side="left", padx=6)
 
         # Median
         f = self._section(scroll, "3) Median Filter")
@@ -1512,7 +1520,13 @@ class AImgKitApp:
         dlg.geometry("500x520")
         dlg.minsize(400, 360)
         dlg.transient(self.root)
-        dlg.after(200, dlg.grab_set)
+        _cleanup_minimize_guard = self._make_dialog_minimize_safe(dlg)
+
+        def _close_dialog():
+            _cleanup_minimize_guard()
+            dlg.destroy()
+
+        dlg.protocol("WM_DELETE_WINDOW", _close_dialog)
 
         ctk.CTkLabel(dlg, text="Learned character tags (★ = auto-selected in future)",
                      font=ctk.CTkFont(size=13, weight="bold")).pack(pady=10)
@@ -1578,7 +1592,7 @@ class AImgKitApp:
         btns.pack(fill="x", padx=10, pady=10)
         ctk.CTkButton(btns, text="Clear All", fg_color=DANGER, hover_color="#a93226",
                       command=_clear).pack(side="left")
-        ctk.CTkButton(btns, text="Close", command=dlg.destroy,
+        ctk.CTkButton(btns, text="Close", command=_close_dialog,
                       width=100).pack(side="right")
 
 
@@ -1654,6 +1668,65 @@ class AImgKitApp:
         ctk.CTkButton(parent, text="Cancel batch", command=on_cancel_all, width=120,
                       fg_color="gray30", hover_color="gray25").pack(side="left", padx=4)
 
+    def _make_dialog_minimize_safe(self, dialog):
+        """Keep a modal CTkToplevel restorable when the main window is minimized.
+
+        On Windows a ``transient`` + ``grab_set`` dialog that gets minimized
+        leaves an invisible window still holding the grab, which freezes the
+        whole app (it can't be reached via the taskbar or Alt+Tab). This wires
+        the dialog to follow the main window: the grab is released and the
+        dialog hidden on minimize, then restored and re-grabbed when the main
+        window comes back.
+
+        Returns a cleanup callable that removes the bindings; call it before the
+        dialog is destroyed.
+        """
+        def _acquire_grab(retries: int = 20):
+            # grab_set fails on a not-yet-viewable window, so guard + retry and
+            # never leave a grab dangling on a hidden window.
+            if not dialog.winfo_exists():
+                return
+            if dialog.winfo_viewable():
+                try:
+                    dialog.grab_set()
+                    dialog.focus_force()
+                    return
+                except tk.TclError:
+                    pass
+            if retries > 0:
+                dialog.after(50, lambda: _acquire_grab(retries - 1))
+
+        def _on_root_minimize(event=None):
+            if event is not None and event.widget is not self.root:
+                return
+            if dialog.winfo_exists():
+                try:
+                    dialog.grab_release()
+                except tk.TclError:
+                    pass
+                dialog.withdraw()
+
+        def _on_root_restore(event=None):
+            if event is not None and event.widget is not self.root:
+                return
+            if dialog.winfo_exists():
+                dialog.deiconify()
+                dialog.lift()
+                _acquire_grab()
+
+        map_id = self.root.bind("<Map>", _on_root_restore, add="+")
+        unmap_id = self.root.bind("<Unmap>", _on_root_minimize, add="+")
+        dialog.after(150, _acquire_grab)
+
+        def _cleanup():
+            try:
+                self.root.unbind("<Map>", map_id)
+                self.root.unbind("<Unmap>", unmap_id)
+            except tk.TclError:
+                pass
+
+        return _cleanup
+
     def _prompt_character_for_image(self, image_path: str, candidates: list[str],
                                      prompt_text: str | None) -> list[str] | None:
         """Modal dialog: returns chosen character names, [] to skip, None to cancel batch."""
@@ -1662,7 +1735,9 @@ class AImgKitApp:
         dialog.geometry("860x540")
         dialog.minsize(680, 440)
         dialog.transient(self.root)
-        dialog.after(150, dialog.grab_set)
+
+        _cleanup_minimize_guard = self._make_dialog_minimize_safe(dialog)
+        dialog.protocol("WM_DELETE_WINDOW", lambda: None)  # block closing via X
 
         result: dict = {"value": []}
         cancel_all: dict = {"value": False}
@@ -1725,6 +1800,7 @@ class AImgKitApp:
         self._build_dialog_buttons(btns, result, cancel_all, check_vars, custom_var, dialog)
 
         dialog.wait_window()
+        _cleanup_minimize_guard()
         return None if cancel_all["value"] else result["value"]
 
     _VIDEO_EXTS = {'.mp4', '.avi', '.mov', '.mkv'}
@@ -2107,7 +2183,7 @@ class AImgKitApp:
             "upscale": self.pp_upscale.get(),
             "upscale_method": self.pp_upscale_method.get(),
             "kuwahara_radius": self.pp_kuwahara_radius.get(),
-            "kuwahara_method": "mean",
+            "kuwahara_method": self.pp_kuwahara_method.get(),
             "median_size": self.pp_median_size.get(),
             "downscale": self.pp_downscale.get(),
             "downscale_method": self.pp_downscale_method.get(),
