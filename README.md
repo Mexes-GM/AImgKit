@@ -9,7 +9,7 @@
 <p align="center"><strong>A batch post-production toolkit for AI artists who ship hundreds of images a day — watermark, strip generation metadata, run a configurable filter pipeline, and auto-name files from booru character tags, all in one pass.</strong></p>
 
 <p align="center">
-  <img src="preview.png" width="820" alt="AImgKit interface">
+  <img src="screenshot.png" width="820" alt="AImgKit interface">
 </p>
 
 ---
